@@ -289,7 +289,7 @@ async function collectPlaylistTrackIds(
   try {
     let path: string | null = `/playlists/${playlistId}/tracks?limit=100`;
     while (path) {
-      const page = await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
+      const page: Paged<PlaylistIdItem> = await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
       pushPage(page.items);
       path = page.next;
     }
@@ -302,7 +302,7 @@ async function collectPlaylistTrackIds(
   try {
     let path: string | null = `/playlists/${playlistId}/items?limit=100`;
     while (path) {
-      const page = await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
+      const page: Paged<PlaylistIdItem> = await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
       pushPage(page.items);
       path = page.next;
     }
