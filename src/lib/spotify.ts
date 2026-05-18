@@ -89,7 +89,8 @@ type Paged<T> = {
 };
 
 type PlaylistTrackItem = {
-  track: SpotifyTrack | null;
+  track?: RawPlaylistTrack | null;
+  item?: RawPlaylistTrack | null;
 };
 
 export function buildAuthUrl(state: string, redirectUri?: string): string {
@@ -226,24 +227,32 @@ export type PlaylistTracksResult = {
   totalTracks: number;
 };
 
-export async function getPlaylistTracks(
+function resolveMarket(country?: string): string {
+  if (country && /^[A-Z]{2}$/i.test(country)) {
+    return country.toUpperCase();
+  }
+  return "US";
+}
+
+function rawTrackFromItem(item: PlaylistTrackItem): RawPlaylistTrack | null {
+  if (item.track?.id) return item.track;
+  if (item.item?.id) return item.item;
+  return null;
+}
+
+async function collectPlaylistTracks(
   accessToken: string,
-  playlistId: string,
-  market?: string,
+  initialPath: string,
 ): Promise<PlaylistTracksResult> {
   const withPreview: SpotifyTrack[] = [];
   let totalTracks = 0;
-  const marketQuery = market ? `&market=${encodeURIComponent(market)}` : "";
-  let path: string | null =
-    `/playlists/${playlistId}/tracks?limit=100&additional_types=track${marketQuery}`;
+  let path: string | null = initialPath;
 
   while (path) {
     const page: Paged<PlaylistTrackItem> =
       await spotifyFetch<Paged<PlaylistTrackItem>>(path, accessToken);
     for (const item of page.items) {
-      const track = normalizePlaylistTrack(
-        item.track as RawPlaylistTrack | null,
-      );
+      const track = normalizePlaylistTrack(rawTrackFromItem(item));
       if (!track) continue;
       totalTracks += 1;
       if (track.preview_url) {
@@ -254,4 +263,22 @@ export async function getPlaylistTracks(
   }
 
   return { withPreview, totalTracks };
+}
+
+export async function getPlaylistTracks(
+  accessToken: string,
+  playlistId: string,
+  market?: string,
+): Promise<PlaylistTracksResult> {
+  const marketCode = resolveMarket(market);
+  const itemsPath = `/playlists/${playlistId}/items?limit=100&market=${marketCode}&additional_types=track`;
+  const tracksPath = `/playlists/${playlistId}/tracks?limit=100&market=${marketCode}`;
+
+  try {
+    return await collectPlaylistTracks(accessToken, itemsPath);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "";
+    if (!message.includes("403")) throw e;
+    return await collectPlaylistTracks(accessToken, tracksPath);
+  }
 }

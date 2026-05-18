@@ -70,6 +70,15 @@ export async function POST(
     const message =
       e instanceof Error ? e.message : "Failed to load playlist tracks";
     console.error("playlist tracks error:", message);
+    if (message.includes("403")) {
+      return NextResponse.json(
+        {
+          error:
+            "Spotify blocked access to this playlist (403). Log out, log in again, and try a playlist you own (e.g. Discover Weekly). If it persists, add your Spotify email under Developer Dashboard → User Management.",
+        },
+        { status: 403 },
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
