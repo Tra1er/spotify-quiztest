@@ -276,7 +276,7 @@ async function collectPlaylistTrackIds(
     );
     let path: string | null = `/playlists/${playlistId}?fields=${fields}`;
     while (path) {
-      const page = await spotifyFetch<PlaylistItemsBundle>(path, accessToken);
+      const page: PlaylistItemsBundle = await spotifyFetch<PlaylistItemsBundle>(path, accessToken);
       pushPage(page.items.items);
       path = page.items.next;
     }
