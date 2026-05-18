@@ -78,7 +78,7 @@ export function AudioPlayer({
         aria-label={playing ? "Pause sample" : "Play sample"}
       >
         {playing && (
-          <span className="absolute inset-0 animate-pulse-ring rounded-full bg-spotify/40" />
+          <span className="absolute inset-0 animate-ping rounded-full bg-spotify/40" />
         )}
         {playing ? (
           <PauseIcon />
