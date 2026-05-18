@@ -25,8 +25,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${display.variable} ${body.variable} font-body antialiased`}
+       <body
+        className="font-sans antialiased"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(29,185,84,0.18), transparent 70%), #0a0a0c",
+        }}
       >
         {children}
       </body>
