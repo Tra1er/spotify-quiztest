@@ -69,6 +69,15 @@ export type SpotifyTrack = {
   duration_ms: number;
 };
 
+type Paged<T> = {
+  items: T[];
+  next: string | null;
+};
+
+type PlaylistTrackItem = {
+  track: SpotifyTrack | null;
+};
+
 export function buildAuthUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: getClientId(),
@@ -163,15 +172,15 @@ export async function getUserPlaylists(
   accessToken: string,
 ): Promise<SpotifyPlaylist[]> {
   const playlists: SpotifyPlaylist[] = [];
-  let url: string | null = "/me/playlists?limit=50";
+  let path: string | null = "/me/playlists?limit=50";
 
-  while (url) {
-    const data = await spotifyFetch<{
-      items: SpotifyPlaylist[];
-      next: string | null;
-    }>(url, accessToken);
-    playlists.push(...data.items);
-    url = data.next;
+  while (path) {
+    const page: Paged<SpotifyPlaylist> = await spotifyFetch<Paged<SpotifyPlaylist>>(
+      path,
+      accessToken,
+    );
+    playlists.push(...page.items);
+    path = page.next;
   }
 
   return playlists;
@@ -182,19 +191,19 @@ export async function getPlaylistTracks(
   playlistId: string,
 ): Promise<SpotifyTrack[]> {
   const tracks: SpotifyTrack[] = [];
-  let url: string | null = `/playlists/${playlistId}/tracks?limit=100&fields=items(track(id,name,artists,album,duration_ms,preview_url)),next`;
+  let path: string | null = `/playlists/${playlistId}/tracks?limit=100&fields=items(track(id,name,artists,album,duration_ms,preview_url)),next`;
 
-  while (url) {
-    const data = await spotifyFetch<{
-      items: { track: SpotifyTrack | null }[];
-      next: string | null;
-    }>(url, accessToken);
-    for (const item of data.items) {
+  while (path) {
+    const page: Paged<PlaylistTrackItem> = await spotifyFetch<Paged<PlaylistTrackItem>>(
+      path,
+      accessToken,
+    );
+    for (const item of page.items) {
       if (item.track?.id && item.track.preview_url) {
         tracks.push(item.track);
       }
     }
-    url = data.next;
+    path = page.next;
   }
 
   return tracks;
