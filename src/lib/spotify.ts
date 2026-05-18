@@ -181,7 +181,8 @@ export async function getUserPlaylists(
   accessToken: string,
 ): Promise<SpotifyPlaylist[]> {
   const playlists: SpotifyPlaylist[] = [];
-  let path: string | null = "/me/playlists?limit=50";
+  let path: string | null =
+    "/me/playlists?limit=50&fields=items(id,name,images,tracks(total),owner(display_name,id)),next";
 
   while (path) {
     const page: Paged<SpotifyPlaylist> = await spotifyFetch<Paged<SpotifyPlaylist>>(

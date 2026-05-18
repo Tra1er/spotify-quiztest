@@ -10,7 +10,7 @@ type Playlist = {
   id: string;
   name: string;
   image: string | null;
-  trackCount: number;
+  trackCount: number | null;
   owner: string;
 };
 
@@ -162,7 +162,10 @@ export default function PlayPage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{p.name}</p>
                         <p className="text-xs text-muted">
-                          {p.trackCount} tracks · {p.owner}
+                          {p.trackCount != null
+                            ? `${p.trackCount} tracks`
+                            : "Playlist"}{" "}
+                          · {p.owner}
                         </p>
                       </div>
                     </button>

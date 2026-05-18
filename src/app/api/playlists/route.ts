@@ -12,15 +12,13 @@ export async function GET() {
 
   try {
     const playlists = await getUserPlaylists(session.accessToken);
-    const playable = playlists
-      .filter((p) => (p.tracks?.total ?? 0) > 0)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        image: p.images?.[0]?.url ?? null,
-        trackCount: p.tracks?.total ?? 0,
-        owner: p.owner?.display_name ?? "Spotify",
-      }));
+    const playable = playlists.map((p) => ({
+      id: p.id,
+      name: p.name,
+      image: p.images?.[0]?.url ?? null,
+      trackCount: p.tracks?.total ?? null,
+      owner: p.owner?.display_name ?? "Spotify",
+    }));
     return NextResponse.json({ playlists: playable });
   } catch (e) {
     const message =
