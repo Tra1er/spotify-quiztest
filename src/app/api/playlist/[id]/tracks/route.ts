@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getPlaylistTracks } from "@/lib/spotify";
+import { getCurrentUser, getPlaylistTracks } from "@/lib/spotify";
 import { buildRounds, DEFAULT_SETTINGS, type QuizSettings } from "@/lib/quiz";
 
 export const dynamic = "force-dynamic";
@@ -39,10 +39,16 @@ export async function POST(
   }
 
   try {
+    let country = session.user.country;
+    if (!country) {
+      const me = await getCurrentUser(session.accessToken);
+      country = me.country;
+    }
+
     const { withPreview, totalTracks } = await getPlaylistTracks(
       session.accessToken,
       id,
-      session.user.country,
+      country,
     );
 
     if (withPreview.length < 4) {
@@ -51,7 +57,7 @@ export async function POST(
           error:
             totalTracks === 0
               ? "This playlist has no playable tracks."
-              : `Found ${totalTracks} tracks, but only ${withPreview.length} have 30-second previews (need at least 4). Try "Discover Weekly", "Liked Songs", or a mainstream playlist.`,
+              : `Found ${totalTracks} tracks, but only ${withPreview.length} have 30-second previews (need at least 4). Try "Discover Weekly" or "Pop Dance Hits". Local/downloaded files never have previews.`,
         },
         { status: 400 },
       );

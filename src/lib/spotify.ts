@@ -74,11 +74,12 @@ export type SpotifyTrack = {
   duration_ms: number;
 };
 
-type RawPlaylistTrack = {
+type RawTrack = {
   id: string;
   name: string;
   preview_url: string | null;
   duration_ms?: number;
+  is_local?: boolean;
   artists?: { name: string }[];
   album?: { name: string; images?: { url: string }[] };
 };
@@ -88,9 +89,9 @@ type Paged<T> = {
   next: string | null;
 };
 
-type PlaylistTrackItem = {
-  track?: RawPlaylistTrack | null;
-  item?: RawPlaylistTrack | null;
+type PlaylistIdItem = {
+  track?: { id: string } | null;
+  item?: { id: string } | null;
 };
 
 export function buildAuthUrl(state: string, redirectUri?: string): string {
@@ -207,8 +208,8 @@ export async function getUserPlaylists(
   return playlists;
 }
 
-function normalizePlaylistTrack(raw: RawPlaylistTrack | null): SpotifyTrack | null {
-  if (!raw?.id) return null;
+function normalizeTrack(raw: RawTrack | null): SpotifyTrack | null {
+  if (!raw?.id || raw.is_local) return null;
   return {
     id: raw.id,
     name: raw.name,
@@ -227,42 +228,94 @@ export type PlaylistTracksResult = {
   totalTracks: number;
 };
 
-function resolveMarket(country?: string): string {
+function parseMarket(country?: string): string | undefined {
   if (country && /^[A-Z]{2}$/i.test(country)) {
     return country.toUpperCase();
   }
-  return "US";
+  return undefined;
 }
 
-function rawTrackFromItem(item: PlaylistTrackItem): RawPlaylistTrack | null {
-  if (item.track?.id) return item.track;
-  if (item.item?.id) return item.item;
-  return null;
+function idFromPlaylistItem(item: PlaylistIdItem): string | null {
+  return item.track?.id ?? item.item?.id ?? null;
 }
 
-async function collectPlaylistTracks(
+/** Step 1: collect track IDs from the playlist (lightweight). */
+async function collectPlaylistTrackIds(
   accessToken: string,
-  initialPath: string,
-): Promise<PlaylistTracksResult> {
-  const withPreview: SpotifyTrack[] = [];
-  let totalTracks = 0;
-  let path: string | null = initialPath;
+  playlistId: string,
+  market?: string,
+): Promise<string[]> {
+  const ids: string[] = [];
+  const marketCode = parseMarket(market);
+  const marketQuery = marketCode ? `&market=${marketCode}` : "";
+  const paths = [
+    `/playlists/${playlistId}/items?limit=100&additional_types=track&fields=items(track(id),item(id)),next${marketQuery}`,
+    `/playlists/${playlistId}/tracks?limit=100&fields=items(track(id)),next${marketQuery}`,
+  ];
 
-  while (path) {
-    const page: Paged<PlaylistTrackItem> =
-      await spotifyFetch<Paged<PlaylistTrackItem>>(path, accessToken);
-    for (const item of page.items) {
-      const track = normalizePlaylistTrack(rawTrackFromItem(item));
-      if (!track) continue;
-      totalTracks += 1;
-      if (track.preview_url) {
-        withPreview.push(track);
+  let lastError: Error | null = null;
+
+  for (const initialPath of paths) {
+    try {
+      let path: string | null = initialPath;
+      while (path) {
+        const page: Paged<PlaylistIdItem> =
+          await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
+        for (const item of page.items) {
+          const id = idFromPlaylistItem(item);
+          if (id) ids.push(id);
+        }
+        path = page.next;
       }
+      return [...new Set(ids)];
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
     }
-    path = page.next;
   }
 
-  return { withPreview, totalTracks };
+  throw lastError ?? new Error("Could not read playlist items");
+}
+
+/** Step 2: batch-fetch full tracks (preview_url lives here, not in playlist items). */
+async function fetchTracksByIds(
+  accessToken: string,
+  ids: string[],
+  market?: string,
+): Promise<Map<string, SpotifyTrack>> {
+  const map = new Map<string, SpotifyTrack>();
+  const marketQuery = market ? `&market=${market}` : "";
+
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const data = await spotifyFetch<{ tracks: (RawTrack | null)[] }>(
+      `/tracks?ids=${chunk.join(",")}${marketQuery}`,
+      accessToken,
+    );
+
+    for (const raw of data.tracks) {
+      const track = normalizeTrack(raw);
+      if (track) map.set(track.id, track);
+    }
+  }
+
+  return map;
+}
+
+function mergePreviewTracks(
+  maps: Map<string, SpotifyTrack>[],
+): SpotifyTrack[] {
+  const byId = new Map<string, SpotifyTrack>();
+  for (const map of maps) {
+    for (const [id, track] of map) {
+      const existing = byId.get(id);
+      if (!existing?.preview_url && track.preview_url) {
+        byId.set(id, track);
+      } else if (!existing) {
+        byId.set(id, track);
+      }
+    }
+  }
+  return [...byId.values()].filter((t) => Boolean(t.preview_url));
 }
 
 export async function getPlaylistTracks(
@@ -270,15 +323,43 @@ export async function getPlaylistTracks(
   playlistId: string,
   market?: string,
 ): Promise<PlaylistTracksResult> {
-  const marketCode = resolveMarket(market);
-  const itemsPath = `/playlists/${playlistId}/items?limit=100&market=${marketCode}&additional_types=track`;
-  const tracksPath = `/playlists/${playlistId}/tracks?limit=100&market=${marketCode}`;
+  const userMarket = parseMarket(market);
+  const trackIds = await collectPlaylistTrackIds(
+    accessToken,
+    playlistId,
+    userMarket,
+  );
+  const totalTracks = trackIds.length;
 
-  try {
-    return await collectPlaylistTracks(accessToken, itemsPath);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "";
-    if (!message.includes("403")) throw e;
-    return await collectPlaylistTracks(accessToken, tracksPath);
+  if (totalTracks === 0) {
+    return { withPreview: [], totalTracks: 0 };
   }
+
+  // 1) No market → Spotify uses the user's account country (best for previews)
+  const maps: Map<string, SpotifyTrack>[] = [];
+  maps.push(await fetchTracksByIds(accessToken, trackIds));
+
+  // 2) User's country from /me (e.g. PL for Poland)
+  if (userMarket) {
+    maps.push(await fetchTracksByIds(accessToken, trackIds, userMarket));
+  }
+
+  let withPreview = mergePreviewTracks(maps);
+
+  // 3) Fallback markets — only re-fetch tracks still missing previews
+  if (withPreview.length < 4) {
+    const previewIds = new Set(withPreview.map((t) => t.id));
+    let missing = trackIds.filter((id) => !previewIds.has(id));
+
+    for (const fallback of ["PL", "US", "GB", "DE", "FR"]) {
+      if (fallback === userMarket || missing.length === 0) continue;
+      maps.push(await fetchTracksByIds(accessToken, missing, fallback));
+      withPreview = mergePreviewTracks(maps);
+      if (withPreview.length >= 4) break;
+      const found = new Set(withPreview.map((t) => t.id));
+      missing = trackIds.filter((id) => !found.has(id));
+    }
+  }
+
+  return { withPreview, totalTracks };
 }
