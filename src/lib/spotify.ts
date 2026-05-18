@@ -238,7 +238,8 @@ export async function getPlaylistTracks(
     `/playlists/${playlistId}/tracks?limit=100&additional_types=track${marketQuery}`;
 
   while (path) {
-    const page = await spotifyFetch<Paged<PlaylistTrackItem>>(path, accessToken);
+    const page: Paged<PlaylistTrackItem> =
+      await spotifyFetch<Paged<PlaylistTrackItem>>(path, accessToken);
     for (const item of page.items) {
       const track = normalizePlaylistTrack(
         item.track as RawPlaylistTrack | null,
