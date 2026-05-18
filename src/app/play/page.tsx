@@ -46,12 +46,16 @@ export default function PlayPage() {
         const { user: u } = await meRes.json();
         setUser(u);
 
-        const plRes = await fetch("/api/playlists");
-        if (!plRes.ok) throw new Error("Failed to load playlists");
-        const { playlists: list } = await plRes.json();
-        setPlaylists(list);
-      } catch {
-        setError("Could not load your Spotify data.");
+        const plRes = await fetch("/api/playlists", { cache: "no-store" });
+        const plData = await plRes.json();
+        if (!plRes.ok) {
+          throw new Error(plData.error ?? "Failed to load playlists");
+        }
+        setPlaylists(plData.playlists ?? []);
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Could not load your Spotify data.";
+        setError(msg);
       } finally {
         setLoading(false);
       }
