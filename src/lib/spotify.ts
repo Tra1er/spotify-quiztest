@@ -51,6 +51,7 @@ export type SpotifyUser = {
   display_name: string | null;
   images?: { url: string }[];
   email?: string;
+  country?: string;
 };
 
 export type SpotifyPlaylist = {
@@ -71,6 +72,15 @@ export type SpotifyTrack = {
   };
   preview_url: string | null;
   duration_ms: number;
+};
+
+type RawPlaylistTrack = {
+  id: string;
+  name: string;
+  preview_url: string | null;
+  duration_ms?: number;
+  artists?: { name: string }[];
+  album?: { name: string; images?: { url: string }[] };
 };
 
 type Paged<T> = {
@@ -196,25 +206,51 @@ export async function getUserPlaylists(
   return playlists;
 }
 
+function normalizePlaylistTrack(raw: RawPlaylistTrack | null): SpotifyTrack | null {
+  if (!raw?.id) return null;
+  return {
+    id: raw.id,
+    name: raw.name,
+    artists: raw.artists ?? [],
+    album: {
+      name: raw.album?.name ?? "",
+      images: raw.album?.images ?? [],
+    },
+    preview_url: raw.preview_url,
+    duration_ms: raw.duration_ms ?? 0,
+  };
+}
+
+export type PlaylistTracksResult = {
+  withPreview: SpotifyTrack[];
+  totalTracks: number;
+};
+
 export async function getPlaylistTracks(
   accessToken: string,
   playlistId: string,
-): Promise<SpotifyTrack[]> {
-  const tracks: SpotifyTrack[] = [];
-  let path: string | null = `/playlists/${playlistId}/tracks?limit=100&fields=items(track(id,name,artists,album,duration_ms,preview_url)),next`;
+  market?: string,
+): Promise<PlaylistTracksResult> {
+  const withPreview: SpotifyTrack[] = [];
+  let totalTracks = 0;
+  const marketQuery = market ? `&market=${encodeURIComponent(market)}` : "";
+  let path: string | null =
+    `/playlists/${playlistId}/tracks?limit=100&additional_types=track${marketQuery}`;
 
   while (path) {
-    const page: Paged<PlaylistTrackItem> = await spotifyFetch<Paged<PlaylistTrackItem>>(
-      path,
-      accessToken,
-    );
+    const page = await spotifyFetch<Paged<PlaylistTrackItem>>(path, accessToken);
     for (const item of page.items) {
-      if (item.track?.id && item.track.preview_url) {
-        tracks.push(item.track);
+      const track = normalizePlaylistTrack(
+        item.track as RawPlaylistTrack | null,
+      );
+      if (!track) continue;
+      totalTracks += 1;
+      if (track.preview_url) {
+        withPreview.push(track);
       }
     }
     path = page.next;
   }
 
-  return tracks;
+  return { withPreview, totalTracks };
 }

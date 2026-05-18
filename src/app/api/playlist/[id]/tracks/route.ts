@@ -3,6 +3,8 @@ import { getSession } from "@/lib/session";
 import { getPlaylistTracks } from "@/lib/spotify";
 import { buildRounds, DEFAULT_SETTINGS, type QuizSettings } from "@/lib/quiz";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -37,29 +39,37 @@ export async function POST(
   }
 
   try {
-    const tracks = await getPlaylistTracks(session.accessToken, id);
-    if (tracks.length < 4) {
+    const { withPreview, totalTracks } = await getPlaylistTracks(
+      session.accessToken,
+      id,
+      session.user.country,
+    );
+
+    if (withPreview.length < 4) {
       return NextResponse.json(
         {
           error:
-            "Need at least 4 tracks with 30s previews in this playlist. Try another playlist or add more popular tracks.",
+            totalTracks === 0
+              ? "This playlist has no playable tracks."
+              : `Found ${totalTracks} tracks, but only ${withPreview.length} have 30-second previews (need at least 4). Try "Discover Weekly", "Liked Songs", or a mainstream playlist.`,
         },
         { status: 400 },
       );
     }
 
-    const rounds = buildRounds(tracks, settings);
+    const rounds = buildRounds(withPreview, settings);
     return NextResponse.json({
       rounds,
       meta: {
-        totalWithPreview: tracks.length,
+        totalWithPreview: withPreview.length,
+        totalTracks,
         roundsPlayed: rounds.length,
       },
     });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to load playlist tracks" },
-      { status: 500 },
-    );
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Failed to load playlist tracks";
+    console.error("playlist tracks error:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
