@@ -8,7 +8,11 @@ export const SPOTIFY_SCOPES = [
   "playlist-read-collaborative",
 ].join(" ");
 
-export function getRedirectUri(): string {
+/** Prefer the live request origin so preview URLs work on Vercel. */
+export function getRedirectUri(origin?: string): string {
+  if (origin) {
+    return `${origin.replace(/\/$/, "")}/api/auth/callback`;
+  }
   if (process.env.SPOTIFY_REDIRECT_URI) {
     return process.env.SPOTIFY_REDIRECT_URI;
   }
@@ -78,11 +82,12 @@ type PlaylistTrackItem = {
   track: SpotifyTrack | null;
 };
 
-export function buildAuthUrl(state: string): string {
+export function buildAuthUrl(state: string, redirectUri?: string): string {
+  const uri = redirectUri ?? getRedirectUri();
   const params = new URLSearchParams({
     client_id: getClientId(),
     response_type: "code",
-    redirect_uri: getRedirectUri(),
+    redirect_uri: uri,
     scope: SPOTIFY_SCOPES,
     state,
     show_dialog: "false",
@@ -90,11 +95,15 @@ export function buildAuthUrl(state: string): string {
   return `${SPOTIFY_ACCOUNTS}/authorize?${params}`;
 }
 
-export async function exchangeCode(code: string): Promise<SpotifyTokens> {
+export async function exchangeCode(
+  code: string,
+  redirectUri?: string,
+): Promise<SpotifyTokens> {
+  const uri = redirectUri ?? getRedirectUri();
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: getRedirectUri(),
+    redirect_uri: uri,
   });
 
   const res = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, {
