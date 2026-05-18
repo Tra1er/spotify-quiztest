@@ -80,7 +80,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Spotify blocked access to this playlist (403). Log out, log in again, and try a playlist you own (e.g. Discover Weekly). If it persists, add your Spotify email under Developer Dashboard → User Management.",
+            "Spotify blocked this playlist (403). Use a playlist YOU created (green/yours), not someone else's. In developer.spotify.com → your app → User Management, add your Spotify email. The app owner needs Spotify Premium in Development mode. Then log out and log in again.",
         },
         { status: 403 },
       );

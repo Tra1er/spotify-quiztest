@@ -12,6 +12,8 @@ type Playlist = {
   image: string | null;
   trackCount: number | null;
   owner: string;
+  ownerId: string | null;
+  isOwn: boolean;
 };
 
 type User = {
@@ -166,6 +168,7 @@ export default function PlayPage() {
                             ? `${p.trackCount} tracks`
                             : "Playlist"}{" "}
                           · {p.owner}
+                          {!p.isOwn ? " · may not work (not yours)" : ""}
                         </p>
                       </div>
                     </button>

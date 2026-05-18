@@ -18,6 +18,8 @@ export async function GET() {
       image: p.images?.[0]?.url ?? null,
       trackCount: p.tracks?.total ?? null,
       owner: p.owner?.display_name ?? "Spotify",
+      ownerId: p.owner?.id ?? null,
+      isOwn: p.owner?.id === session.user.id,
     }));
     return NextResponse.json({ playlists: playable });
   } catch (e) {

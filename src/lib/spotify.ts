@@ -82,6 +82,7 @@ type RawTrack = {
   is_local?: boolean;
   artists?: { name: string }[];
   album?: { name: string; images?: { url: string }[] };
+  linked_from?: { preview_url?: string | null };
 };
 
 type Paged<T> = {
@@ -208,8 +209,15 @@ export async function getUserPlaylists(
   return playlists;
 }
 
+function previewUrlFromRaw(raw: RawTrack): string | null {
+  if (raw.preview_url) return raw.preview_url;
+  if (raw.linked_from?.preview_url) return raw.linked_from.preview_url;
+  return null;
+}
+
 function normalizeTrack(raw: RawTrack | null): SpotifyTrack | null {
   if (!raw?.id || raw.is_local) return null;
+  const preview_url = previewUrlFromRaw(raw);
   return {
     id: raw.id,
     name: raw.name,
@@ -218,7 +226,7 @@ function normalizeTrack(raw: RawTrack | null): SpotifyTrack | null {
       name: raw.album?.name ?? "",
       images: raw.album?.images ?? [],
     },
-    preview_url: raw.preview_url,
+    preview_url,
     duration_ms: raw.duration_ms ?? 0,
   };
 }
@@ -239,51 +247,86 @@ function idFromPlaylistItem(item: PlaylistIdItem): string | null {
   return item.track?.id ?? item.item?.id ?? null;
 }
 
-/** Step 1: collect track IDs from the playlist (lightweight). */
+type PlaylistItemsBundle = {
+  items: {
+    items: PlaylistIdItem[];
+    next: string | null;
+  };
+};
+
+/** Collect track IDs — try several endpoints (dev-mode apps often block /tracks sub-route). */
 async function collectPlaylistTrackIds(
   accessToken: string,
   playlistId: string,
-  market?: string,
 ): Promise<string[]> {
   const ids: string[] = [];
-  const marketCode = parseMarket(market);
-  const marketQuery = marketCode ? `&market=${marketCode}` : "";
-  const paths = [
-    `/playlists/${playlistId}/items?limit=100&additional_types=track&fields=items(track(id),item(id)),next${marketQuery}`,
-    `/playlists/${playlistId}/tracks?limit=100&fields=items(track(id)),next${marketQuery}`,
-  ];
+  const errors: string[] = [];
 
-  let lastError: Error | null = null;
-
-  for (const initialPath of paths) {
-    try {
-      let path: string | null = initialPath;
-      while (path) {
-        const page: Paged<PlaylistIdItem> =
-          await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
-        for (const item of page.items) {
-          const id = idFromPlaylistItem(item);
-          if (id) ids.push(id);
-        }
-        path = page.next;
-      }
-      return [...new Set(ids)];
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
+  const pushPage = (rows: PlaylistIdItem[]) => {
+    for (const row of rows) {
+      const id = idFromPlaylistItem(row);
+      if (id) ids.push(id);
     }
+  };
+
+  // A) GET /playlists/{id} — recommended for playlists you own
+  try {
+    const fields = encodeURIComponent(
+      "items(items(track(id),item(id))),items(next)",
+    );
+    let path: string | null = `/playlists/${playlistId}?fields=${fields}`;
+    while (path) {
+      const page = await spotifyFetch<PlaylistItemsBundle>(path, accessToken);
+      pushPage(page.items.items);
+      path = page.items.next;
+    }
+    if (ids.length > 0) return [...new Set(ids)];
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : "get-playlist");
   }
 
-  throw lastError ?? new Error("Could not read playlist items");
+  // B) GET /playlists/{id}/tracks — no extra params (user token supplies country)
+  try {
+    let path: string | null = `/playlists/${playlistId}/tracks?limit=100`;
+    while (path) {
+      const page = await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
+      pushPage(page.items);
+      path = page.next;
+    }
+    if (ids.length > 0) return [...new Set(ids)];
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : "get-playlist-tracks");
+  }
+
+  // C) GET /playlists/{id}/items
+  try {
+    let path: string | null = `/playlists/${playlistId}/items?limit=100`;
+    while (path) {
+      const page = await spotifyFetch<Paged<PlaylistIdItem>>(path, accessToken);
+      pushPage(page.items);
+      path = page.next;
+    }
+    if (ids.length > 0) return [...new Set(ids)];
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : "get-playlist-items");
+  }
+
+  throw new Error(errors.join(" | ") || "Could not read playlist");
 }
 
-/** Step 2: batch-fetch full tracks (preview_url lives here, not in playlist items). */
+/**
+ * GET /tracks?ids=... — official way to read preview_url (see Spotify docs).
+ * With a user token, omitting market uses the user's account country.
+ */
 async function fetchTracksByIds(
   accessToken: string,
   ids: string[],
   market?: string,
 ): Promise<Map<string, SpotifyTrack>> {
   const map = new Map<string, SpotifyTrack>();
-  const marketQuery = market ? `&market=${market}` : "";
+  if (ids.length === 0) return map;
+
+  const marketQuery = market ? `&market=${encodeURIComponent(market)}` : "";
 
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
@@ -324,40 +367,37 @@ export async function getPlaylistTracks(
   market?: string,
 ): Promise<PlaylistTracksResult> {
   const userMarket = parseMarket(market);
-  const trackIds = await collectPlaylistTrackIds(
-    accessToken,
-    playlistId,
-    userMarket,
-  );
+  const trackIds = await collectPlaylistTrackIds(accessToken, playlistId);
   const totalTracks = trackIds.length;
 
   if (totalTracks === 0) {
     return { withPreview: [], totalTracks: 0 };
   }
 
-  // 1) No market → Spotify uses the user's account country (best for previews)
   const maps: Map<string, SpotifyTrack>[] = [];
+
+  // User access token → account country (no market param)
   maps.push(await fetchTracksByIds(accessToken, trackIds));
 
-  // 2) User's country from /me (e.g. PL for Poland)
   if (userMarket) {
     maps.push(await fetchTracksByIds(accessToken, trackIds, userMarket));
   }
 
   let withPreview = mergePreviewTracks(maps);
 
-  // 3) Fallback markets — only re-fetch tracks still missing previews
   if (withPreview.length < 4) {
-    const previewIds = new Set(withPreview.map((t) => t.id));
-    let missing = trackIds.filter((id) => !previewIds.has(id));
+    let missing = trackIds.filter(
+      (id) => !withPreview.some((t) => t.id === id),
+    );
 
-    for (const fallback of ["PL", "US", "GB", "DE", "FR"]) {
+    for (const fallback of ["PL", "US", "GB", "DE", "FR", "NL", "SE"]) {
       if (fallback === userMarket || missing.length === 0) continue;
       maps.push(await fetchTracksByIds(accessToken, missing, fallback));
       withPreview = mergePreviewTracks(maps);
       if (withPreview.length >= 4) break;
-      const found = new Set(withPreview.map((t) => t.id));
-      missing = trackIds.filter((id) => !found.has(id));
+      missing = trackIds.filter(
+        (id) => !withPreview.some((t) => t.id === id),
+      );
     }
   }
 
