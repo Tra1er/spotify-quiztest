@@ -7,6 +7,12 @@ type Props = {
 const ERROR_MESSAGES: Record<string, string> = {
   access_denied: "You cancelled the Spotify login.",
   invalid_state: "Login expired — please try again.",
+  redirect_mismatch:
+    "Redirect URI mismatch. Add this exact URL in Spotify Dashboard → Redirect URIs: your-site-url/api/auth/callback",
+  invalid_client:
+    "Invalid Spotify Client ID or Secret. Check Vercel environment variables.",
+  session_config:
+    "SESSION_SECRET missing or too short in Vercel (use 32+ random characters).",
   auth_failed: "Could not connect to Spotify. Check your app settings.",
 };
 
